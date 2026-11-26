@@ -31,3 +31,4 @@ sonicare_session_*.jsonl
 
 # Log from the ESPHome CI build test (esphome/tests/)
 esphome/tests/build.log
+esphome/examples/secrets.yaml

@@ -1,0 +1,142 @@
+# Philips Sonicare BLE bridge for the Waveshare ESP32-S3-Zero / Zero-M
+# (sold as the Waveshare ESP32-S3 Mini), one toothbrush.
+# The standard Zero has 4 MB flash. For the N8R8 variant, use 8MB below.
+esphome:
+  name: sonicare-ble-bridge
+  friendly_name: "Sonicare BLE Bridge"
+  # Needed on the ESP32-S3 for brushes with a rotating BLE address.
+  build_flags:
+    - -DCONFIG_BT_BLE_RPA_SUPPORTED=0
+  on_boot:
+    priority: -100
+    then:
+      - script.execute: update_status_led
+
+esp32:
+  board: esp32-s3-devkitc-1
+  flash_size: 4MB
+  framework:
+    type: esp-idf
+    # ESP-IDF 5.5.6 can lose BLE bonds after disconnect; see KNOWN_ISSUES.md.
+    version: 5.5.5
+    sdkconfig_options:
+      CONFIG_BT_GATTC_MAX_CACHE_CHAR: "80"
+      CONFIG_BT_GATTC_NOTIF_REG_MAX: "20"
+
+logger:
+  level: DEBUG
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+  custom_services: true
+  homeassistant_services: true
+  on_client_connected:
+    then:
+      - script.execute: update_status_led
+  on_client_disconnected:
+    then:
+      - script.execute: update_status_led
+
+ota:
+  - platform: esphome
+    encryption:
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: !secret ap_ssid
+    password: !secret ap_password
+
+captive_portal:
+
+esp32_ble:
+  io_capability: none
+  max_notifications: 20
+
+esp32_ble_tracker:
+  scan_parameters:
+    active: true
+    interval: 211ms
+    window: 120ms
+
+external_components:
+  - source:
+      type: git
+      url: https://github.com/mtheli/philips_sonicare_ble
+      ref: master
+      path: esphome/components
+    components: [philips_sonicare]
+    refresh: 0s
+
+# Pair the brush from Home Assistant: Philips Sonicare > ESP32 Bridge.
+philips_sonicare:
+  - id: philips_sonicare_ble
+    connected:
+      id: brush_connected
+      internal: true
+      on_state:
+        then:
+          - script.execute: update_status_led
+    on_connect:
+      then:
+        - logger.log: "Connected to Sonicare"
+    on_disconnect:
+      then:
+        - logger.log: "Disconnected from Sonicare"
+
+# Onboard WS2812 RGB LED (GPIO21): blue for BLE, green for HA, red otherwise.
+light:
+  - platform: esp32_rmt_led_strip
+    chipset: ws2812
+    channel_colors: GRB
+    pin: GPIO21
+    num_leds: 1
+    id: status_led
+    name: "Status LED"
+    restore_mode: ALWAYS_OFF
+
+script:
+  - id: update_status_led
+    mode: restart
+    then:
+      - if:
+          condition:
+            binary_sensor.is_on: brush_connected
+          then:
+            - light.turn_on:
+                id: status_led
+                brightness: 30%
+                red: 0%
+                green: 0%
+                blue: 100%
+          else:
+            - if:
+                condition:
+                  api.connected:
+                    state_subscription_only: true
+                then:
+                  - light.turn_on:
+                      id: status_led
+                      brightness: 30%
+                      red: 0%
+                      green: 100%
+                      blue: 0%
+                else:
+                  - light.turn_on:
+                      id: status_led
+                      brightness: 30%
+                      red: 100%
+                      green: 0%
+                      blue: 0%
+
+# A client subscribes to entity states shortly after opening the API connection.
+interval:
+  - interval: 5s
+    then:
+      - script.execute: update_status_led
+
+button:
+  - platform: restart
+    name: "Restart"
